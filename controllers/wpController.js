@@ -2,7 +2,7 @@ const WpService = require('../services/whatsapp');
 
 class WpController {
   static async startSession(req, res) {
-    const { userId,phone} = req.body;
+    const { userId,phone} = {...req.body,...req.query};
 
     if (!userId) {
       return res.status(400).json({ error: 'El campo userId es obligatorio.' });
@@ -18,7 +18,7 @@ class WpController {
   }
 
   static async getContact(req, res) {
-    const { userId } = req.body;
+    const { userId } = {...req.body,...req.query};
 
     if (!userId) {
       return res.status(400).json({ error: 'El campo userId es obligatorio.' });
@@ -35,7 +35,7 @@ class WpController {
 
 
   static async sendMessage(req, res) {
-    const { userId, to, message } = req.body;
+    const { userId, to, message } = {...req.body,...req.query};
 
     if (!userId || !to || !message) {
       return res.status(400).json({ error: 'Los campos userId, to y message son obligatorios.' });
