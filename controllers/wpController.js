@@ -2,6 +2,22 @@ const WpService = require('../services/whatsapp');
 
 class WpController {
   static async startSession(req, res) {
+    const { userId,phone} = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'El campo userId es obligatorio.' });
+    }
+
+    try {
+      await WpService.createConnection(userId,phone);
+      res.status(200).json({ message: `Sesión iniciada para el usuario ${userId}` });
+    } catch (error) {
+      console.error('Error al iniciar sesión:', error);
+      res.status(500).json({ error: 'Error al iniciar sesión.' });
+    }
+  }
+
+  static async getContact(req, res) {
     const { userId } = req.body;
 
     if (!userId) {
@@ -9,13 +25,14 @@ class WpController {
     }
 
     try {
-      await WpService.createConnection(userId);
+      await WpService.getContacts(userId);
       res.status(200).json({ message: `Sesión iniciada para el usuario ${userId}` });
     } catch (error) {
       console.error('Error al iniciar sesión:', error);
       res.status(500).json({ error: 'Error al iniciar sesión.' });
     }
   }
+
 
   static async sendMessage(req, res) {
     const { userId, to, message } = req.body;

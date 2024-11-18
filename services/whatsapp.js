@@ -1,6 +1,8 @@
-const { makeWASocket,DisconnectReason, useMultiFileAuthState } =require('@whiskeysockets/baileys');
+const { makeWASocket,DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion,makeInMemoryStore } =require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
+
+
 
 const customLogger = {
     level: 'fatal',
@@ -17,11 +19,12 @@ class WpService {
 
 
     constructor() {
-        if (!WhatsAppManager.instance) {
+        if (!WpService.instance) {
           this.connections = new Map(); // Almacena las conexiones activas (clave: userId)
-          WhatsAppManager.instance = this; // Singleton para evitar duplicidad
+          this.stores = new Map();
+          WpService.instance = this; // Singleton para evitar duplicidad
         }
-        return WhatsAppManager.instance;
+        return WpService.instance;
       }
 
 
@@ -29,13 +32,23 @@ class WpService {
    * @param {string} userId 
    * @returns {Promise<Object>} 
    */
-  async createConnection(userId) {
-    const authFolder = `./auth/${userId}`; 
+  async createConnection(userId,numberPairing) {
+    const authFolder = path.join(__dirname,`./wpSessions/${userId}`); 
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+    const { version } = await fetchLatestBaileysVersion();
+
+    const store = makeInMemoryStore({ })
+    
+    store.readFromFile(path.join(__dirname,`./wpStore/${userId}`));
+    
+    setInterval(() => {
+        store.writeToFile(path.join(__dirname,`./wpStore/${userId}`))
+    }, 10_000)
 
     const socket = makeWASocket({
+      version,  
         auth: state,
-        printQRInTerminal: false,
+        printQRInTerminal: true,
         syncFullHistory: false,
         fireInitQueries: false,
         shouldSyncHistoryMessage: (msg) => {  return false;  },
@@ -43,13 +56,27 @@ class WpService {
         logger:customLogger
     });
 
+    store.bind(socket.ev);
     // Manejo de eventos
     socket.ev.on('creds.update', saveCreds);
+   
+     socket.ev.on('contacts.upsert', async() => {
+        console.log('got contacts', Object.values(store.contacts))
+    })
     socket.ev.on('connection.update', (update) => {
       const { connection, lastDisconnect, qr } = update;
       if(qr){
-        const code= socket.requestPairingCode(573177229993);
-        console.log("code",code);
+      (async()=>{
+        try {
+        if(numberPairing!==null && numberPairing!==undefined){
+          const Number = numberPairing.replace(/[^\d]/g, '');
+          const code=await socket.requestPairingCode(Number);
+          console.log("code",code);
+        }
+        } catch (error) {
+          
+        }
+      })();
        
       }
       if (connection === 'close' && !qr) {
@@ -62,17 +89,53 @@ class WpService {
           DisconnectReason.multideviceMismatch].includes(disconnectCode)) {
           
             this.connections.delete(userId);
-            this.deleteAuthFiles(`./auth/${userId}`);
+            this.deleteAuthFiles(path.join(__dirname,`./wpSessions/${userId}`));
+       }else{
+            this.createConnection(userId);
        }
       }
     
       } else if (connection === 'open') {
+      
+        this.connections.set(userId, socket);
+        this.stores.set(userId, store);
         console.log(`Conexión abierta para el usuario ${userId}`);
       }
     });
 
     return socket;
   }
+
+  async getContacts(userId) {
+    try {
+        // Verifica si hay una conexión activa para el usuario
+        if (!this.connections.has(userId)) {
+            console.log(`No hay conexión activa para el usuario ${userId}`);
+            return null;
+        }
+
+        const socket = this.connections.get(userId);
+        const store = this.stores.get(userId); // Asegúrate de guardar y usar el `store` al crear la conexión
+
+        if (!store || !store.contacts) {
+            console.log(`No se encontraron contactos para el usuario ${userId}`);
+            return null;
+        }
+
+        // Convierte los contactos en un formato legible
+        const contacts = Object.values(store.contacts).map(contact => ({
+            id: contact.id,
+            name: contact.name || contact.notify || 'Sin Nombre',
+        }));
+
+        console.log(`Contactos recuperados para ${userId}:`, contacts);
+
+        return contacts;
+    } catch (error) {
+        console.error('Error al obtener contactos:', error);
+        return null;
+    }
+}
 
 
   async sendMessage (userId, to, message)  {
@@ -98,21 +161,7 @@ class WpService {
     }
   }
  
-  deleteAuthFiles(authFolder) {
-    const filesToDelete = [
-        'auth-info.json',
-        'creds.json',
-        // Puedes añadir más archivos si es necesario
-    ];
 
-    filesToDelete.forEach(file => {
-        const filePath = path.join(authFolder, file);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath); // Elimina el archivo
-            console.log(`Archivo de autenticación ${file} eliminado de ${authFolder}`);
-        }
-    });
-}
 
   /**
    * Cierra la conexión de un usuario y la elimina del gestor
@@ -126,7 +175,24 @@ class WpService {
       console.log(`Conexión cerrada para ${userId}`);
     }
   }
+  
 
+
+deleteAuthFiles(authFolder) {
+  const filesToDelete = [
+      'auth-info.json',
+      'creds.json',
+      // Puedes añadir más archivos si es necesario
+  ];
+
+  filesToDelete.forEach(file => {
+      const filePath = path.join(authFolder, file);
+      if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath); // Elimina el archivo
+          console.log(`Archivo de autenticación ${file} eliminado de ${authFolder}`);
+      }
+  });
+}
 }
 
 
